@@ -13,9 +13,7 @@ What it does:
 ## Run It
 
 Double-click:
-
-- [OpenYTBrief-Launcher.cmd](OpenYTBrief-Launcher.cmd)
-- [OpenYTBrief-Launcher.bat](OpenYTBrief-Launcher.bat)
+- [YTBrief-Launcher.bat](YTBrief-Launcher.bat)
 
 Launcher behavior:
 
