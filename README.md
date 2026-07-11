@@ -1,3 +1,5 @@
+[HackMD好讀版](https://hackmd.io/@yuuhouse/rkMXMDkEGl)
+
 # OpenYTBrief
 
 Local YouTube download and transcription helper for Windows.
