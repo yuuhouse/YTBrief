@@ -28,8 +28,8 @@ if (string.IsNullOrWhiteSpace(url))
 }
 
 var ytdlp = ResolveRequiredTool("yt-dlp.exe", workRoot, appDir);
-var ffmpeg = ResolveRequiredTool("ffmpeg.exe", workRoot, appDir);
-if (ytdlp is null || ffmpeg is null)
+var ffmpeg = ResolveRequiredTool("ffmpeg.exe", workRoot, appDir); // optional: if null, some flows still work
+if (ytdlp is null)
 {
     return 1;
 }
@@ -38,8 +38,8 @@ var runId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
 var outputDir = Path.GetFullPath(Path.Combine(workRoot, "output", runId));
 Directory.CreateDirectory(outputDir);
 
-var videoTemplate = Path.Combine(outputDir, "video.%(ext)s");
-var audioPath = Path.Combine(outputDir, "audio.wav");
+var audioTemplate = Path.Combine(outputDir, "audio.%(ext)s");
+var convertedAudioPath = Path.Combine(outputDir, "audio.wav");
 var transcriptPath = Path.Combine(outputDir, "transcript.txt");
 var promptPath = Path.Combine(outputDir, "chatgpt_prompt.txt");
 var metadataPath = Path.Combine(outputDir, "metadata.txt");
@@ -50,40 +50,25 @@ Console.WriteLine($"輸出資料夾: {outputDir}");
 try
 {
     Console.WriteLine();
-    Console.WriteLine("1/4 下載影片...");
+    Console.WriteLine("1/4 下載音訊（只抓 audio）...");
     await RunProcess(
         ytdlp,
         [
             "--no-update",
             "--no-playlist",
-            "-f", "bv*+ba/b",
-            "--merge-output-format", "mkv",
-            "--ffmpeg-location", Path.GetDirectoryName(ffmpeg)!,
-            "-o", videoTemplate,
+            "-f", "bestaudio",
+            "-o", audioTemplate,
             url
         ],
         outputDir);
 
-    var videoPath = FindDownloadedVideo(outputDir);
-    if (videoPath is null)
+    var downloadedAudioPath = FindDownloadedAudio(outputDir);
+    if (downloadedAudioPath is null)
     {
-        throw new InvalidOperationException("yt-dlp 沒有產生可用的影片檔。");
+        throw new InvalidOperationException("yt-dlp 沒有產生可用的音訊檔。");
     }
 
-    Console.WriteLine();
-    Console.WriteLine("2/4 擷取 Whisper 用音訊...");
-    await RunProcess(
-        ffmpeg,
-        [
-            "-y",
-            "-i", videoPath,
-            "-vn",
-            "-ac", "1",
-            "-ar", "16000",
-            "-c:a", "pcm_s16le",
-            audioPath
-        ],
-        outputDir);
+    Console.WriteLine($"下載到音訊檔: {downloadedAudioPath}");
 
     Console.WriteLine();
     Console.WriteLine("3/4 讀取影片資訊...");
@@ -111,7 +96,7 @@ try
         }
     }
 
-    await Transcribe(whisper, audioPath, transcriptPath, outputDir, options);
+    await Transcribe(whisper, downloadedAudioPath, transcriptPath, outputDir, options, ffmpeg);
 
     if (!File.Exists(transcriptPath))
     {
@@ -125,10 +110,22 @@ try
 
     Console.WriteLine();
     Console.WriteLine("完成。");
-    Console.WriteLine($"影片: {videoPath}");
+    Console.WriteLine($"下載音訊檔: {downloadedAudioPath}");
     Console.WriteLine($"逐字稿: {transcriptPath}");
     Console.WriteLine($"ChatGPT 摘要 prompt: {promptPath}");
-    Console.WriteLine("如果剪貼簿可用，prompt 已複製，可以直接貼到 ChatGPT。");
+
+    Console.WriteLine("正在開啟 ChatGPT 並自動貼上 prompt 並送出（請先登入 https://chat.openai.com）...");
+    try
+    {
+        OpenChatAndPasteAndSend(prompt);
+        Console.WriteLine("已嘗試在預設瀏覽器中貼上並送出 prompt。");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"自動貼上/送出失敗: {ex.Message}");
+        Console.Error.WriteLine("Prompt 已複製到剪貼簿，可手動貼上。");
+    }
+
     return 0;
 }
 catch (Exception ex)
@@ -340,6 +337,35 @@ static string? FindDownloadedVideo(string outputDir)
         .FirstOrDefault();
 }
 
+static string? FindDownloadedAudio(string outputDir)
+{
+    var preferred = new[] { "audio.wav", "audio.m4a", "audio.webm", "audio.mp3", "audio.opus" };
+    foreach (var fileName in preferred)
+    {
+        var candidate = Path.Combine(outputDir, fileName);
+        if (File.Exists(candidate) && new FileInfo(candidate).Length > 0)
+        {
+            return candidate;
+        }
+    }
+
+    return Directory
+        .EnumerateFiles(outputDir, "audio.*")
+        .Where(path =>
+        {
+            var name = Path.GetFileName(path);
+            if (name.Contains(".temp.", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains(".f", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return new FileInfo(path).Length > 0;
+        })
+        .OrderByDescending(path => new FileInfo(path).Length)
+        .FirstOrDefault();
+}
+
 static async Task<bool> TryAutoInstallWhisper(string workRoot, string appDir, string outputDir)
 {
     foreach (var script in new[]
@@ -396,7 +422,7 @@ static bool HasPythonWhisperModule(string python)
     }
 }
 
-static async Task Transcribe(WhisperRunner whisper, string audioPath, string transcriptPath, string outputDir, CliOptions options)
+static async Task Transcribe(WhisperRunner whisper, string inputAudioPath, string transcriptPath, string outputDir, CliOptions options, string? ffmpeg)
 {
     var exe = Path.GetFileName(whisper.FileName).ToLowerInvariant();
     var mode = options.WhisperMode;
@@ -415,12 +441,37 @@ static async Task Transcribe(WhisperRunner whisper, string audioPath, string tra
             throw new InvalidOperationException($"whisper.cpp 模式需要模型檔，預設位置是 {modelPath}，或用 --model 指定。");
         }
 
+        // whisper.cpp typically expects WAV-like input. If input isn't WAV, try to convert with ffmpeg if available.
+        var audioForCpp = inputAudioPath;
+        if (!inputAudioPath.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(ffmpeg))
+            {
+                throw new InvalidOperationException("whisper.cpp 模式需要 WAV 格式的音訊，且需 ffmpeg 進行轉換，但找不到 ffmpeg。請安裝 ffmpeg 或改用 Python whisper 模式。");
+            }
+
+            var converted = Path.Combine(outputDir, "audio.wav");
+            await RunProcess(
+                ffmpeg,
+                [
+                    "-y",
+                    "-i", inputAudioPath,
+                    "-vn",
+                    "-ac", "1",
+                    "-ar", "16000",
+                    "-c:a", "pcm_s16le",
+                    converted
+                ],
+                outputDir);
+            audioForCpp = converted;
+        }
+
         var outputBase = Path.Combine(outputDir, "transcript");
         await RunProcess(
             whisper.FileName,
             [
                 "-m", modelPath,
-                "-f", audioPath,
+                "-f", audioForCpp,
                 "-l", options.Language,
                 "-otxt",
                 "-of", outputBase
@@ -436,9 +487,10 @@ static async Task Transcribe(WhisperRunner whisper, string audioPath, string tra
         return;
     }
 
+    // OpenAI whisper (python) can accept many audio formats directly. Pass the downloaded audio file.
     var whisperArgs = whisper.ArgumentPrefix
         .Concat([
-            audioPath,
+            inputAudioPath,
             "--model", options.Model,
             "--language", options.Language,
             "--fp16", "False",
@@ -452,7 +504,7 @@ static async Task Transcribe(WhisperRunner whisper, string audioPath, string tra
         whisperArgs,
         outputDir);
 
-    var openAiOutput = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(audioPath) + ".txt");
+    var openAiOutput = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(inputAudioPath) + ".txt");
     if (File.Exists(openAiOutput))
     {
         File.Copy(openAiOutput, transcriptPath, overwrite: true);
@@ -587,17 +639,71 @@ static void TrySetClipboard(string text)
         return;
     }
 
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            // Retry a few times because other applications may hold the clipboard temporarily.
+            const int maxAttempts = 5;
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                try
+                {
+                    System.Windows.Forms.Clipboard.SetText(text);
+                    return;
+                }
+                catch (System.Runtime.InteropServices.ExternalException)
+                {
+                    // clipboard busy - wait and retry
+                    Thread.Sleep(150);
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort only; don't let clipboard failures crash the app.
+        }
+    });
+
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+}
+
+static void OpenChatAndPasteAndSend(string text)
+{
+    // Ensure clipboard contains the text
+    TrySetClipboard(text);
+
+    var url = "https://chat.openai.com/chat";
     try
     {
-        var thread = new Thread(() => System.Windows.Forms.Clipboard.SetText(text));
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        thread.Join();
+        var psi = new ProcessStartInfo(url) { UseShellExecute = true };
+        Process.Start(psi);
     }
     catch
     {
-        // Clipboard is best-effort only; the prompt file is the source of truth.
+        // ignore - we'll still try to paste/send to active window
     }
+
+    var t = new Thread(() =>
+    {
+        try
+        {
+            // Wait for browser to open and render the chat input area
+            Thread.Sleep(4000);
+            System.Windows.Forms.SendKeys.SendWait("^v");
+            Thread.Sleep(200);
+            System.Windows.Forms.SendKeys.SendWait("{ENTER}");
+        }
+        catch
+        {
+            // best-effort
+        }
+    });
+    t.SetApartmentState(ApartmentState.STA);
+    t.Start();
+    // don't block the main thread too long; let the paste/send happen asynchronously
 }
 
 static void PrintHelp()
