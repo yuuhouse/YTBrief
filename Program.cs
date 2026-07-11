@@ -14,18 +14,7 @@ if (options.ShowHelp)
 var appDir = AppContext.BaseDirectory;
 var workRoot = Directory.GetCurrentDirectory();
 
-var url = options.Url;
-if (string.IsNullOrWhiteSpace(url))
-{
-    Console.Write("貼上 YouTube 網址: ");
-    url = Console.ReadLine();
-}
-
-if (string.IsNullOrWhiteSpace(url))
-{
-    Console.Error.WriteLine("沒有輸入網址。");
-    return 1;
-}
+string? initialUrl = options.Url;
 
 var ytdlp = ResolveRequiredTool("yt-dlp.exe", workRoot, appDir);
 var ffmpeg = ResolveRequiredTool("ffmpeg.exe", workRoot, appDir); // optional: if null, some flows still work
@@ -34,7 +23,23 @@ if (ytdlp is null)
     return 1;
 }
 
-var runId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+while (true)
+{
+    string url = initialUrl;
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        Console.Write("貼上 YouTube 網址（或輸入 q 離開）： ");
+        url = Console.ReadLine();
+    }
+    initialUrl = null;
+
+    if (string.IsNullOrWhiteSpace(url) || url.Trim().Equals("q", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.WriteLine("已退出。若要再次使用，請重新啟動程式。");
+        return 0;
+    }
+
+    var runId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
 var outputDir = Path.GetFullPath(Path.Combine(workRoot, "output", runId));
 Directory.CreateDirectory(outputDir);
 
@@ -92,7 +97,7 @@ try
             Console.WriteLine("找不到本機 Whisper。已先建立 ChatGPT prompt 範本，但 transcript.txt 尚未產生。");
             Console.WriteLine("可先重跑讓它再嘗試自動安裝，或手動執行 update\\Install-Whisper.cmd 後重跑；也可用 --whisper 指定 whisper.exe 路徑。");
             Console.WriteLine($"Prompt: {promptPath}");
-            return 2;
+                        continue;
         }
     }
 
@@ -126,14 +131,32 @@ try
         Console.Error.WriteLine("Prompt 已複製到剪貼簿，可手動貼上。");
     }
 
-    return 0;
+    // ask user whether to process another link
+    Console.Write("要處理下一個連結嗎？ (y/N): ");
+    var ans = Console.ReadLine();
+    if (string.Equals(ans?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+    {
+        continue;
+    }
+    Console.WriteLine("全部完成，退出程式。");
+return 0;
 }
 catch (Exception ex)
 {
     Console.Error.WriteLine();
     Console.Error.WriteLine($"失敗: {ex.Message}");
     Console.Error.WriteLine($"保留中間檔案: {outputDir}");
+
+    Console.Write("要繼續處理下一個連結嗎？ (y/N): ");
+    var ans2 = Console.ReadLine();
+    if (string.Equals(ans2?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+    {
+        continue;
+    }
+
     return 1;
+}
+
 }
 
 static string? ResolveRequiredTool(string fileName, string workRoot, string appDir)
