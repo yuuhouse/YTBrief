@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-title OpenYTBrief Launcher
+title YTBrief Launcher
 chcp 65001 >nul
 
 set "SCRIPT_DIR=%~dp0"
@@ -53,7 +53,7 @@ if not defined RUN_MODE if defined PROJECT_FILE (
   set "RUN_MODE=dotnet"
 )
 
-echo OpenYTBrief Launcher
+echo YTBrief Launcher
 echo.
 
 if not defined RUN_MODE (
@@ -81,7 +81,7 @@ if "%RUN_MODE%"=="exe" (
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.
-echo OpenYTBrief exited with code %EXIT_CODE%.
+echo YTBrief exited with code %EXIT_CODE%.
 
 :END
 echo.

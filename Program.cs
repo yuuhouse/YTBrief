@@ -616,7 +616,7 @@ static async Task<int> PipeProcess(
 static string BuildChatGptPrompt(string url, string title, string channel, string duration, string transcript)
 {
     return $"""
-你是專業的 YouTube 影片研究助理。請根據下方影片資訊與逐字稿，用繁體中文整理成 OpenBrief 風格摘要。
+你是專業的 YouTube 影片研究助理。請根據下方影片資訊與逐字稿，用繁體中文整理成 YTBrief 風格摘要。
 
 請輸出：
 1. 3 句內總覽
