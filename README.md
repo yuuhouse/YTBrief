@@ -1,6 +1,8 @@
 [HackMD好讀版](https://hackmd.io/@yuuhouse/rkMXMDkEGl)
 
-# OpenYTBrief
+![YTBrief](https://hackmd.io/_uploads/By2BuPJNGx.png)
+
+# YTBrief
 
 Local YouTube download and transcription helper for Windows.
 
@@ -47,6 +49,11 @@ Each run creates a folder under `output\TIMESTAMP` with:
 - `metadata.txt`
 - `chatgpt_prompt.txt`
 - `transcript.txt` when Whisper finishes successfully
+
+## Screenshot
+![CMD](https://meee.com.tw/WrVmB4Q.png)
+![CMD](https://meee.com.tw/mxMRs7Q.png)
+![Chatgpt](https://meee.com.tw/NDxejgO.png)
 
 ## Requirements
 
