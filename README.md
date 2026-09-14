@@ -11,7 +11,7 @@ What it does:
 1. Paste a YouTube URL
 2. Download the video with `yt-dlp`
 3. Extract audio with `ffmpeg`
-4. Auto-detect Whisper and install it if needed
+4. Auto-detect faster-whisper and install it if needed
 5. Produce a transcript and a ChatGPT-ready prompt
 
 ## Run It
@@ -50,6 +50,9 @@ Each run creates a folder under `output\TIMESTAMP` with:
 - `chatgpt_prompt.txt`
 - `transcript.txt` when Whisper finishes successfully
 
+Each transcript line includes the segment start and end time, for example:
+`[00:01:23.400 --> 00:01:27.100] transcript text`
+
 ## Screenshot
 ![CMD](https://meee.com.tw/WrVmB4Q.png)
 ![CMD](https://meee.com.tw/mxMRs7Q.png)
@@ -62,16 +65,16 @@ Each run creates a folder under `output\TIMESTAMP` with:
 - `yt-dlp.exe`
 - `ffmpeg.exe`
 - `ffprobe.exe`
-- Python 3.10+ for Whisper installation
+- Python 3.10+ for faster-whisper installation
 
 ## Notes
 
 - This version produces a prompt you can paste into ChatGPT.
 - It does not automatically send content into ChatGPT web.
-- If Whisper is missing, the app tries to install it from `update\Install-Whisper.bat`.
+- If faster-whisper is missing, the app tries to install it from `update\Install-Whisper.bat`.
 - `yt-dlp` update warnings are suppressed.
 - Video merging uses `mkv` to avoid Opus merge failures.
-- Whisper output is forced to UTF-8 to avoid `cp950` encoding errors.
+- faster-whisper output is written as UTF-8 to avoid `cp950` encoding errors.
 - CPU `FP16` warnings are disabled.
 
 ## Recent changes (最近改動)
@@ -88,3 +91,43 @@ Each run creates a folder under `output\TIMESTAMP` with:
 - 或者新增一個 CLI 選項 --auto-send 來讓自動送出成為選用而非預設。
 - 或將 changes commit 並把 build artifacts 從 repo 中移除（建議）。
 
+# QA：下載音訊時出現 HTTP Error 403
+
+## 症狀
+
+Launcher 在「下載音訊（只抓 audio）」階段失敗，訊息類似：
+
+```text
+ERROR: unable to download video data: HTTP Error 403: Forbidden
+失敗: yt-dlp.exe 結束碼 1
+```
+
+如果不同 YouTube 影片、`youtube.com/watch` 與 `youtu.be` 網址都出現相同錯誤，通常不是網址格式或影片本身的問題，而是 yt-dlp 的 YouTube extractor 已落後於 YouTube 的播放器變更。
+
+## 修復方式
+
+在專案根目錄執行：
+
+```bat
+update\Update-YtDlp.bat
+```
+
+目前更新腳本使用 yt-dlp nightly，因為 YouTube 的修復有時會先發布在 nightly、尚未進入 stable 版。也可以手動執行：
+
+```bat
+yt-dlp.exe --update-to nightly
+```
+
+確認版本：
+
+```bat
+yt-dlp.exe --version
+```
+
+更新後重新啟動 Launcher，再貼上原本的 YouTube URL 測試即可。此次案例更新至 `2026.08.18.122307` 後，`DsFrgeWhtIk` 已能成功下載 `audio.webm`。
+
+## 注意事項
+
+- 若從 `publish` 資料夾啟動，請更新該啟動位置所使用的 `yt-dlp.exe`，避免仍使用舊副本。
+- 更新後仍失敗時，先確認實際執行的 yt-dlp 版本，再重新執行測試；不要只重貼同一個 URL。
+- 這個 403 與 Whisper、ffmpeg 或輸出資料夾無關，應先修復 yt-dlp 下載階段。

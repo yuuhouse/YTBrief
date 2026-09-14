@@ -18,12 +18,14 @@ if not exist "%YTDLP%" (
   goto END
 )
 
-"%YTDLP%" --update
+rem YouTube frequently changes its player delivery before a stable yt-dlp
+rem release is published; nightly contains the current extractor fixes.
+"%YTDLP%" --update-to nightly
 goto END
 
 :DRYRUN
 echo Would run:
-echo   "%~dp0..\yt-dlp.exe" --update
+echo   "%~dp0..\yt-dlp.exe" --update-to nightly
 goto END
 
 :HELP

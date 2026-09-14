@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-title Install Whisper for OpenYTBrief
+title Install faster-whisper for OpenYTBrief
 chcp 65001 >nul
 
 if /i "%~1"=="--help" goto HELP
@@ -22,8 +22,8 @@ if not defined PYTHON_CMD (
 
 echo Install Whisper for OpenYTBrief
 echo.
-echo This installs the OpenAI Whisper command line tool into your Python environment.
-echo It may download a large PyTorch package and can take several minutes.
+echo This installs faster-whisper into your Python environment.
+echo The model itself is downloaded on first transcription and can take several minutes.
 echo.
 
 if not defined PYTHON_CMD (
@@ -47,37 +47,29 @@ if errorlevel 1 (
 )
 
 echo.
-echo Installing or updating OpenAI Whisper...
-%PYTHON_CMD% -m pip install --upgrade openai-whisper --progress-bar on
+echo Installing or updating faster-whisper...
+%PYTHON_CMD% -m pip install --upgrade faster-whisper --progress-bar on
 if errorlevel 1 (
   set "EXIT_CODE=%ERRORLEVEL%"
   goto END
 )
 
 echo.
-echo Checking Whisper...
-where whisper >nul 2>nul
+echo Checking faster-whisper...
+%PYTHON_CMD% -c "import faster_whisper" >nul 2>nul
 if %ERRORLEVEL%==0 (
-  whisper --help >nul 2>nul
-  echo Whisper command is available.
+  echo faster-whisper Python module is available.
   goto END
 )
 
-%PYTHON_CMD% -m whisper --help >nul 2>nul
-if %ERRORLEVEL%==0 (
-  echo Whisper Python module is installed, but whisper.exe is not on PATH yet.
-  echo OpenYTBrief can use it through python -m whisper.
-  goto END
-)
-
-echo Whisper install did not complete successfully. Please check the messages above.
+echo faster-whisper installation did not complete successfully. Please check the messages above.
 set "EXIT_CODE=1"
 goto END
 
 :DRYRUN
 echo Would run:
 echo   python -m pip install --upgrade pip --progress-bar on
-echo   python -m pip install --upgrade openai-whisper --progress-bar on
+echo   python -m pip install --upgrade faster-whisper --progress-bar on
 goto END
 
 :HELP

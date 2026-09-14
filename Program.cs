@@ -77,9 +77,9 @@ try
 
     Console.WriteLine();
     Console.WriteLine("3/4 讀取影片資訊...");
-    var title = await CaptureProcess(ytdlp, ["--no-update", "--no-playlist", "--print", "%(title)s", url], outputDir);
-    var channel = await CaptureProcess(ytdlp, ["--no-update", "--no-playlist", "--print", "%(channel,uploader)s", url], outputDir);
-    var duration = await CaptureProcess(ytdlp, ["--no-update", "--no-playlist", "--print", "%(duration_string)s", url], outputDir);
+    var title = await CaptureProcess(ytdlp, ["--no-update", "--no-playlist", "--encoding", "utf-8", "--print", "%(title)s", url], outputDir);
+    var channel = await CaptureProcess(ytdlp, ["--no-update", "--no-playlist", "--encoding", "utf-8", "--print", "%(channel,uploader)s", url], outputDir);
+    var duration = await CaptureProcess(ytdlp, ["--no-update", "--no-playlist", "--encoding", "utf-8", "--print", "%(duration_string)s", url], outputDir);
     await File.WriteAllTextAsync(metadataPath, $"URL: {url}{Environment.NewLine}Title: {title.Trim()}{Environment.NewLine}Channel: {channel.Trim()}{Environment.NewLine}Duration: {duration.Trim()}{Environment.NewLine}", Encoding.UTF8);
 
     Console.WriteLine();
@@ -110,7 +110,8 @@ try
 
     var transcript = await File.ReadAllTextAsync(transcriptPath, Encoding.UTF8);
     var prompt = BuildChatGptPrompt(url, title.Trim(), channel.Trim(), duration.Trim(), transcript);
-    await File.WriteAllTextAsync(promptPath, prompt, Encoding.UTF8);
+    // Include UTF-8 BOM so Windows Notepad detects the encoding correctly.
+    await File.WriteAllTextAsync(promptPath, prompt, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     TrySetClipboard(prompt);
 
     Console.WriteLine();
@@ -303,9 +304,33 @@ static WhisperRunner? ResolveWhisper(string? explicitPath)
     }
 
     var python = FindOnPath("python.exe") ?? FindOnPath("python") ?? FindOnPath("py.exe") ?? FindOnPath("py");
-    if (python is not null && HasPythonWhisperModule(python))
+    var fasterWhisperScript = FindFasterWhisperScript(cwd, baseDir);
+    if (python is not null && fasterWhisperScript is not null && HasPythonModule(python, "faster_whisper"))
+    {
+        return new WhisperRunner(python, [fasterWhisperScript]);
+    }
+
+    if (python is not null && HasPythonModule(python, "whisper"))
     {
         return new WhisperRunner(python, ["-m", "whisper"]);
+    }
+
+    return null;
+}
+
+static string? FindFasterWhisperScript(string cwd, string baseDir)
+{
+    foreach (var candidate in new[]
+    {
+        Path.Combine(cwd, "update", "faster_whisper_transcribe.py"),
+        Path.Combine(baseDir, "update", "faster_whisper_transcribe.py"),
+        Path.Combine(baseDir, "faster_whisper_transcribe.py"),
+    })
+    {
+        if (File.Exists(candidate))
+        {
+            return Path.GetFullPath(candidate);
+        }
     }
 
     return null;
@@ -418,7 +443,7 @@ static async Task<bool> TryAutoInstallWhisper(string workRoot, string appDir, st
     return false;
 }
 
-static bool HasPythonWhisperModule(string python)
+static bool HasPythonModule(string python, string moduleName)
 {
     try
     {
@@ -427,9 +452,8 @@ static bool HasPythonWhisperModule(string python)
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
-        process.StartInfo.ArgumentList.Add("-m");
-        process.StartInfo.ArgumentList.Add("whisper");
-        process.StartInfo.ArgumentList.Add("--help");
+        process.StartInfo.ArgumentList.Add("-c");
+        process.StartInfo.ArgumentList.Add($"import {moduleName}");
         process.Start();
         if (!process.WaitForExit(20_000))
         {
@@ -451,7 +475,9 @@ static async Task Transcribe(WhisperRunner whisper, string inputAudioPath, strin
     var mode = options.WhisperMode;
     if (mode == WhisperMode.Auto)
     {
-        mode = whisper.ArgumentPrefix.Count == 0 && (exe.Contains("whisper-cli") || exe == "main.exe")
+        mode = whisper.ArgumentPrefix.Any(argument => argument.EndsWith("faster_whisper_transcribe.py", StringComparison.OrdinalIgnoreCase))
+            ? WhisperMode.FasterWhisper
+            : whisper.ArgumentPrefix.Count == 0 && (exe.Contains("whisper-cli") || exe == "main.exe")
             ? WhisperMode.WhisperCpp
             : WhisperMode.OpenAiWhisper;
     }
@@ -497,16 +523,32 @@ static async Task Transcribe(WhisperRunner whisper, string inputAudioPath, strin
                 "-f", audioForCpp,
                 "-l", options.Language,
                 "-otxt",
+                "-osrt",
                 "-of", outputBase
             ],
             outputDir);
 
-        var cppOutput = outputBase + ".txt";
+        var cppOutput = outputBase + ".srt";
         if (File.Exists(cppOutput))
         {
-            File.Copy(cppOutput, transcriptPath, overwrite: true);
+            await WriteTimestampedTranscript(cppOutput, transcriptPath);
         }
 
+        return;
+    }
+
+    if (mode == WhisperMode.FasterWhisper)
+    {
+        var fasterArgs = whisper.ArgumentPrefix
+            .Concat([
+                inputAudioPath,
+                transcriptPath,
+                "--model", options.Model,
+                "--language", options.Language
+            ])
+            .ToArray();
+
+        await RunProcess(whisper.FileName, fasterArgs, outputDir);
         return;
     }
 
@@ -517,7 +559,7 @@ static async Task Transcribe(WhisperRunner whisper, string inputAudioPath, strin
             "--model", options.Model,
             "--language", options.Language,
             "--fp16", "False",
-            "--output_format", "txt",
+            "--output_format", "srt",
             "--output_dir", outputDir
         ])
         .ToArray();
@@ -527,11 +569,50 @@ static async Task Transcribe(WhisperRunner whisper, string inputAudioPath, strin
         whisperArgs,
         outputDir);
 
-    var openAiOutput = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(inputAudioPath) + ".txt");
+    var openAiOutput = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(inputAudioPath) + ".srt");
     if (File.Exists(openAiOutput))
     {
-        File.Copy(openAiOutput, transcriptPath, overwrite: true);
+        await WriteTimestampedTranscript(openAiOutput, transcriptPath);
     }
+}
+
+static async Task WriteTimestampedTranscript(string sourcePath, string targetPath)
+{
+    var lines = await File.ReadAllLinesAsync(sourcePath, Encoding.UTF8);
+    var output = new List<string>();
+    string? timestamp = null;
+    var text = new List<string>();
+
+    void FlushSegment()
+    {
+        if (timestamp is not null && text.Count > 0)
+        {
+            output.Add($"[{timestamp}] {string.Join(" ", text)}");
+        }
+
+        timestamp = null;
+        text.Clear();
+    }
+
+    foreach (var rawLine in lines)
+    {
+        var line = rawLine.Trim();
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            FlushSegment();
+        }
+        else if (line.Contains("-->", StringComparison.Ordinal))
+        {
+            timestamp = line.Replace(',', '.');
+        }
+        else if (timestamp is not null && !int.TryParse(line, out _))
+        {
+            text.Add(line);
+        }
+    }
+
+    FlushSegment();
+    await File.WriteAllLinesAsync(targetPath, output, Encoding.UTF8);
 }
 
 static async Task RunProcess(string fileName, IReadOnlyList<string> arguments, string workingDirectory)
@@ -545,14 +626,60 @@ static async Task RunProcess(string fileName, IReadOnlyList<string> arguments, s
 
 static async Task<string> CaptureProcess(string fileName, IReadOnlyList<string> arguments, string workingDirectory)
 {
-    var builder = new StringBuilder();
-    var exitCode = await PipeProcess(fileName, arguments, workingDirectory, builder);
+    using var process = new Process();
+    process.StartInfo.FileName = fileName;
+    process.StartInfo.WorkingDirectory = workingDirectory;
+    process.StartInfo.UseShellExecute = false;
+    process.StartInfo.RedirectStandardOutput = true;
+    process.StartInfo.RedirectStandardError = true;
+    process.StartInfo.Environment["PYTHONIOENCODING"] = "utf-8";
+    process.StartInfo.Environment["PYTHONUTF8"] = "1";
+    foreach (var arg in arguments)
+    {
+        process.StartInfo.ArgumentList.Add(arg);
+    }
+
+    process.Start();
+    using var stdoutBuffer = new MemoryStream();
+    var stdoutTask = process.StandardOutput.BaseStream.CopyToAsync(stdoutBuffer);
+    var stderrTask = process.StandardError.ReadToEndAsync();
+    await process.WaitForExitAsync();
+    await stdoutTask;
+    var stderr = await stderrTask;
+    if (!string.IsNullOrWhiteSpace(stderr))
+    {
+        Console.Error.Write(stderr);
+    }
+
+    var exitCode = process.ExitCode;
     if (exitCode != 0)
     {
         return "";
     }
 
-    return builder.ToString();
+    return DecodeProcessOutput(stdoutBuffer.ToArray());
+}
+
+static string DecodeProcessOutput(byte[] bytes)
+{
+    if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+    {
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    // yt-dlp normally emits UTF-8, but a Windows code-page can still leak
+    // through when it is launched from an older cp950 console. Decode the
+    // raw bytes first so a wrong decoder cannot permanently create U+FFFD.
+    try
+    {
+        return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
+            .GetString(bytes);
+    }
+    catch (DecoderFallbackException)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return Encoding.GetEncoding(950).GetString(bytes);
+    }
 }
 
 static async Task<int> PipeProcess(
@@ -616,10 +743,10 @@ static async Task<int> PipeProcess(
 static string BuildChatGptPrompt(string url, string title, string channel, string duration, string transcript)
 {
     return $"""
-你是專業的 YouTube 影片研究助理。請根據下方影片資訊與逐字稿，用繁體中文整理成 YTBrief 風格摘要。
+你是專業的 YouTube 影片研究助理。請根據下方影片資訊與逐字稿，用繁體中文整理成摘要。
 
 請輸出：
-1. 3 句內總覽
+1. 條列式列出5個重點 
 2. 重點條列，保留具體數字、專有名詞、事件、因果關係
 3. 時間軸摘要，如果逐字稿沒有時間戳就用段落順序
 4. 可執行建議或值得追問的問題
@@ -650,7 +777,8 @@ static async Task WriteMissingWhisperPrompt(string promptPath, string url, strin
 請把逐字稿貼在這行下面：
 
 """;
-    await File.WriteAllTextAsync(promptPath, prompt, Encoding.UTF8);
+    // Include UTF-8 BOM so Windows Notepad detects the encoding correctly.
+    await File.WriteAllTextAsync(promptPath, prompt, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 }
 
 static string Fallback(string value) => string.IsNullOrWhiteSpace(value) ? "未知" : value.Trim();
@@ -740,10 +868,10 @@ OpenYTBrief - YouTube 下載、Whisper 自動安裝/轉錄、產生摘要 prompt
   OpenYTBrief.exe <YouTube網址> --whisper C:\path\whisper-cli.exe --whisper-mode cpp --model C:\path\ggml-base.bin
 
 選項:
-  --model <nameOrPath>        OpenAI Whisper CLI 的模型名稱，預設 base；whisper.cpp 模式則是模型檔路徑
+  --model <nameOrPath>        Whisper 模型名稱，預設 base；whisper.cpp 模式則是模型檔路徑
   --language <lang>           Whisper 語言，預設 zh
   --whisper <path>            指定 whisper.exe / whisper-cli.exe
-  --whisper-mode <auto|openai|cpp>
+  --whisper-mode <auto|faster|openai|cpp>
   --help
 """);
 }
@@ -751,6 +879,7 @@ OpenYTBrief - YouTube 下載、Whisper 自動安裝/轉錄、產生摘要 prompt
 enum WhisperMode
 {
     Auto,
+    FasterWhisper,
     OpenAiWhisper,
     WhisperCpp
 }
@@ -801,6 +930,7 @@ sealed record CliOptions(
                     mode = rawMode switch
                     {
                         "openai" => WhisperMode.OpenAiWhisper,
+                        "faster" => WhisperMode.FasterWhisper,
                         "cpp" => WhisperMode.WhisperCpp,
                         "auto" => WhisperMode.Auto,
                         _ => throw new ArgumentException($"未知 whisper mode: {rawMode}")
