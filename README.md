@@ -4,15 +4,14 @@
 
 # YTBrief
 
-Local YouTube download and transcription helper for Windows.
+Local YouTube and Bilibili video summarization helper for Windows.
 
 What it does:
 
-1. Paste a YouTube URL
-2. Download the video with `yt-dlp`
-3. Extract audio with `ffmpeg`
-4. Auto-detect faster-whisper and install it if needed
-5. Produce a transcript and a ChatGPT-ready prompt
+1. Paste a YouTube or Bilibili URL
+2. For YouTube, download audio with `yt-dlp`, then transcribe it with faster-whisper
+3. For Bilibili, fetch an available subtitle directly from Bilibili's API without using `yt-dlp`
+4. Produce a timestamped transcript and a ChatGPT-ready prompt
 
 ## Run It
 
@@ -40,6 +39,14 @@ Update scripts live in `update`:
 - [update/Install-Whisper.bat](update/Install-Whisper.bat)
 - [update/Update-All.bat](update/Update-All.bat)
 
+## Unit Tests
+
+Run the offline unit test suite with:
+
+```powershell
+dotnet run --project tests/OpenYTBrief.UnitTests/OpenYTBrief.UnitTests.csproj
+```
+
 ## Output
 
 Each run creates a folder under `output\TIMESTAMP` with:
@@ -48,7 +55,8 @@ Each run creates a folder under `output\TIMESTAMP` with:
 - `audio.wav`
 - `metadata.txt`
 - `chatgpt_prompt.txt`
-- `transcript.txt` when Whisper finishes successfully
+- `transcript.txt` when a transcript is available
+- `subtitle.json` for Bilibili videos when a subtitle track is available
 
 Each transcript line includes the segment start and end time, for example:
 `[00:01:23.400 --> 00:01:27.100] transcript text`
@@ -69,8 +77,10 @@ Each transcript line includes the segment start and end time, for example:
 
 ## Notes
 
-- This version produces a prompt you can paste into ChatGPT.
-- It does not automatically send content into ChatGPT web.
+- YouTube uses the existing `yt-dlp` and faster-whisper workflow. Bilibili uses its video metadata and player subtitle APIs directly and does not invoke `yt-dlp`.
+- If Bilibili has no accessible subtitle, YTBrief tries its playback API for audio and uses the existing local Whisper and ffmpeg tools. This path does not use `yt-dlp`.
+- If Bilibili requires login, put an exported Netscape-format Cookie file named `bilibili_cookies.txt` in the project folder. This file is ignored by Git and should not be shared.
+- This version produces a prompt and attempts to paste and submit it in ChatGPT web.
 - If faster-whisper is missing, the app tries to install it from `update\Install-Whisper.bat`.
 - `yt-dlp` update warnings are suppressed.
 - Video merging uses `mkv` to avoid Opus merge failures.

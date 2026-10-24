@@ -63,7 +63,7 @@ if not defined RUN_MODE (
 )
 
 set "YT_URL="
-set /p "YT_URL=Paste YouTube URL then press Enter: "
+set /p "YT_URL=Paste a YouTube or Bilibili URL then press Enter: "
 
 if not defined YT_URL (
   echo.

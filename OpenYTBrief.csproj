@@ -9,6 +9,9 @@
     <RootNamespace>OpenYTBrief</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="yt-dlp.exe" Condition="Exists('yt-dlp.exe')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="ffmpeg.exe" Condition="Exists('ffmpeg.exe')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="ffprobe.exe" Condition="Exists('ffprobe.exe')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

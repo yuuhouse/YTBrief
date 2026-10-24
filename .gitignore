@@ -58,6 +58,10 @@ publish/
 out/
 .vs/
 .idea/
+TestResults/
+coverage/
+tests/
+bilibili_cookies.txt
 
 # Generated project outputs
 output/

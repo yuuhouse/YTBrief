@@ -16,19 +16,12 @@ var workRoot = Directory.GetCurrentDirectory();
 
 string? initialUrl = options.Url;
 
-var ytdlp = ResolveRequiredTool("yt-dlp.exe", workRoot, appDir);
-var ffmpeg = ResolveRequiredTool("ffmpeg.exe", workRoot, appDir); // optional: if null, some flows still work
-if (ytdlp is null)
-{
-    return 1;
-}
-
 while (true)
 {
     string url = initialUrl;
     if (string.IsNullOrWhiteSpace(url))
     {
-        Console.Write("貼上 YouTube 網址（或輸入 q 離開）： ");
+        Console.Write("貼上 YouTube 或 B 站網址（或輸入 q 離開）： ");
         url = Console.ReadLine();
     }
     initialUrl = null;
@@ -54,6 +47,105 @@ Console.WriteLine($"輸出資料夾: {outputDir}");
 
 try
 {
+    if (BilibiliSubtitleClient.TryParseVideoUrl(url, out var bilibiliVideo))
+    {
+        Console.WriteLine("讀取 B 站影片資訊與字幕（不使用 yt-dlp）...");
+        var result = await BilibiliSubtitleClient.FetchSubtitleAsync(bilibiliVideo);
+        var biliTitle = result.Title;
+        var biliChannel = result.Uploader;
+        var biliDuration = result.Duration;
+        var subtitlePath = Path.Combine(outputDir, "subtitle.json");
+
+        string biliTranscript;
+        if (!string.IsNullOrWhiteSpace(result.Transcript))
+        {
+            biliTranscript = result.Transcript;
+            if (result.RawSubtitleJson is not null)
+            {
+                await File.WriteAllTextAsync(subtitlePath, result.RawSubtitleJson, Encoding.UTF8);
+            }
+            Console.WriteLine($"已取得 B 站字幕（{result.Language}）。");
+        }
+        else if (!string.IsNullOrWhiteSpace(result.AudioUrl))
+        {
+            Console.WriteLine("這支影片沒有可用字幕，改用 B 站播放 API 取得音訊並以本機 Whisper 轉錄...");
+            var biliAudioPath = Path.Combine(outputDir, "bilibili_audio.m4s");
+            var biliWavPath = Path.Combine(outputDir, "audio.wav");
+            await BilibiliSubtitleClient.DownloadAudioAsync(result.AudioUrl, biliAudioPath);
+            var biliFfmpeg = ResolveRequiredTool("ffmpeg.exe", workRoot, appDir);
+            if (biliFfmpeg is null)
+            {
+                throw new InvalidOperationException("B 站沒有可用字幕，且缺少 ffmpeg.exe，無法轉換音訊供 Whisper 使用。");
+            }
+            await RunProcess(biliFfmpeg, ["-y", "-i", biliAudioPath, "-vn", "-ac", "1", "-ar", "16000", biliWavPath], outputDir);
+
+            var biliWhisper = ResolveWhisper(options.WhisperPath);
+            if (biliWhisper is null)
+            {
+                Console.WriteLine("找不到本機 Whisper，正在嘗試自動安裝...");
+                var installed = await TryAutoInstallWhisper(workRoot, appDir, outputDir);
+                biliWhisper = installed ? ResolveWhisper(options.WhisperPath) : null;
+            }
+            if (biliWhisper is null)
+            {
+                throw new InvalidOperationException("本機 Whisper 無法使用，B 站音訊已下載至輸出資料夾。請先執行 update\\Install-Whisper.bat，再重新處理此網址。");
+            }
+            await Transcribe(biliWhisper, biliWavPath, transcriptPath, outputDir, options, biliFfmpeg);
+            biliTranscript = await File.ReadAllTextAsync(transcriptPath, Encoding.UTF8);
+            if (string.IsNullOrWhiteSpace(biliTranscript))
+            {
+                throw new InvalidOperationException("Whisper 沒有產生可用逐字稿。音訊仍保留在輸出資料夾。");
+            }
+        }
+        else
+        {
+            throw new InvalidOperationException("B 站未提供可用字幕，也無法取得音訊備援。");
+        }
+
+        await File.WriteAllTextAsync(transcriptPath, biliTranscript, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        await File.WriteAllTextAsync(metadataPath,
+            $"Platform: Bilibili{Environment.NewLine}URL: {url}{Environment.NewLine}Title: {biliTitle}{Environment.NewLine}Uploader: {biliChannel}{Environment.NewLine}Duration: {biliDuration}{Environment.NewLine}Transcript source: {(result.Transcript is null ? "Whisper audio fallback" : $"Subtitle ({result.Language})")}{Environment.NewLine}Part: {result.Part}{Environment.NewLine}",
+            Encoding.UTF8);
+
+        var biliPrompt = BuildChatGptPrompt(url, biliTitle, biliChannel, biliDuration, biliTranscript);
+        await File.WriteAllTextAsync(promptPath, biliPrompt, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        TrySetClipboard(biliPrompt);
+
+        Console.WriteLine($"字幕逐字稿: {transcriptPath}");
+        if (result.RawSubtitleJson is not null)
+        {
+            Console.WriteLine($"原始字幕: {subtitlePath}");
+        }
+        Console.WriteLine($"ChatGPT 摘要 prompt: {promptPath}");
+        Console.WriteLine("正在開啟 ChatGPT 並貼上 prompt...");
+        try
+        {
+            OpenChatAndPasteAndSend(biliPrompt);
+            Console.WriteLine("已嘗試在預設瀏覽器中貼上並送出 prompt。");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"自動貼上/送出失敗: {ex.Message}");
+            Console.Error.WriteLine("Prompt 已複製到剪貼簿，可手動貼上。");
+        }
+
+        Console.Write("要處理下一個連結嗎？ (y/N): ");
+        var bilibiliAnswer = Console.ReadLine();
+        if (string.Equals(bilibiliAnswer?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+        Console.WriteLine("全部完成，退出程式。");
+        return 0;
+    }
+
+    var ytdlp = ResolveRequiredTool("yt-dlp.exe", workRoot, appDir);
+    var ffmpeg = ResolveRequiredTool("ffmpeg.exe", workRoot, appDir); // optional: if null, some flows still work
+    if (ytdlp is null)
+    {
+        return 1;
+    }
+
     Console.WriteLine();
     Console.WriteLine("1/4 下載音訊（只抓 audio）...");
     await RunProcess(
@@ -743,7 +835,7 @@ static async Task<int> PipeProcess(
 static string BuildChatGptPrompt(string url, string title, string channel, string duration, string transcript)
 {
     return $"""
-你是專業的 YouTube 影片研究助理。請根據下方影片資訊與逐字稿，用繁體中文整理成摘要。
+你是專業的影片研究助理。請根據下方影片資訊與逐字稿，用繁體中文整理成摘要。
 
 請輸出：
 1. 條列式列出5個重點 
