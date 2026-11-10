@@ -22,7 +22,7 @@ if not defined PYTHON_CMD (
 
 echo Install Whisper for OpenYTBrief
 echo.
-echo This installs faster-whisper into your Python environment.
+echo This installs faster-whisper and the CUDA runtime libraries for NVIDIA GPUs.
 echo The model itself is downloaded on first transcription and can take several minutes.
 echo.
 
@@ -47,29 +47,30 @@ if errorlevel 1 (
 )
 
 echo.
-echo Installing or updating faster-whisper...
-%PYTHON_CMD% -m pip install --upgrade faster-whisper --progress-bar on
+echo Installing faster-whisper, CUDA libraries, and compatible PyAV...
+%PYTHON_CMD% -m pip install --upgrade faster-whisper av==16.1.0 nvidia-cublas-cu12 nvidia-cudnn-cu12 --progress-bar on
 if errorlevel 1 (
   set "EXIT_CODE=%ERRORLEVEL%"
   goto END
 )
 
 echo.
-echo Checking faster-whisper...
-%PYTHON_CMD% -c "import faster_whisper" >nul 2>nul
+echo Checking faster-whisper packages and NVIDIA GPU visibility...
+%PYTHON_CMD% -c "import av, ctranslate2, faster_whisper, nvidia.cublas, nvidia.cudnn; count=ctranslate2.get_cuda_device_count(); print('PyAV:', av.__version__); print('CUDA devices:', count); assert count > 0, 'No CUDA device detected'"
 if %ERRORLEVEL%==0 (
-  echo faster-whisper Python module is available.
+  echo Required packages are installed and an NVIDIA CUDA device is visible.
+  echo Model CUDA initialization will be checked when transcription starts.
   goto END
 )
 
-echo faster-whisper installation did not complete successfully. Please check the messages above.
+echo Package or CUDA device check failed. Please check the messages above.
 set "EXIT_CODE=1"
 goto END
 
 :DRYRUN
 echo Would run:
 echo   python -m pip install --upgrade pip --progress-bar on
-echo   python -m pip install --upgrade faster-whisper --progress-bar on
+echo   python -m pip install --upgrade faster-whisper av==16.1.0 nvidia-cublas-cu12 nvidia-cudnn-cu12 --progress-bar on
 goto END
 
 :HELP

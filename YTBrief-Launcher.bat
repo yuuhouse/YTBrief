@@ -3,6 +3,9 @@ setlocal EnableExtensions
 title YTBrief Launcher
 chcp 65001 >nul
 
+rem Use the NVIDIA GPU for faster-whisper instead of its CPU default.
+set "FASTER_WHISPER_DEVICE=gpu"
+
 set "SCRIPT_DIR=%~dp0"
 set "ROOT_DIR=%SCRIPT_DIR%"
 set "RUN_MODE="

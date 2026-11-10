@@ -60,8 +60,11 @@ out/
 .idea/
 TestResults/
 coverage/
-tests/
 bilibili_cookies.txt
+
+# Root-level .NET runtime artifacts
+/OpenYTBrief.deps.json
+/OpenYTBrief.runtimeconfig.json
 
 # Generated project outputs
 output/

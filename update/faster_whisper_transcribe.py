@@ -1,6 +1,27 @@
 import argparse
+import os
 from pathlib import Path
 
+
+def add_cuda_dll_directories() -> None:
+    # NVIDIA's pip wheels install CUDA DLLs under site-packages on Windows,
+    # which is not on the DLL search path by default.
+    if os.name != "nt":
+        return
+
+    try:
+        import nvidia.cublas
+        import nvidia.cudnn
+    except ImportError:
+        return
+
+    for package in (nvidia.cublas, nvidia.cudnn):
+        dll_dir = Path(package.__path__[0]) / "bin"
+        if dll_dir.is_dir():
+            os.add_dll_directory(str(dll_dir))
+
+
+add_cuda_dll_directories()
 from faster_whisper import WhisperModel
 
 
@@ -20,13 +41,13 @@ def main() -> None:
     parser.add_argument("--language", default="zh")
     args = parser.parse_args()
 
-    # CPU/int8 works on ordinary Windows installations. Users with a configured
-    # CUDA environment can opt into GPU mode with FASTER_WHISPER_DEVICE=gpu.
-    import os
-
-    device = os.environ.get("FASTER_WHISPER_DEVICE", "cpu")
+    device = os.environ.get("FASTER_WHISPER_DEVICE", "cpu").strip().lower()
+    if device == "gpu":
+        device = "cuda"
     compute_type = os.environ.get("FASTER_WHISPER_COMPUTE_TYPE", "int8" if device == "cpu" else "float16")
+    print(f"Loading faster-whisper model={args.model}, device={device}, compute_type={compute_type}", flush=True)
     model = WhisperModel(args.model, device=device, compute_type=compute_type)
+    print("Model loaded successfully.", flush=True)
     segments, _ = model.transcribe(args.audio, language=args.language)
 
     output = Path(args.output)

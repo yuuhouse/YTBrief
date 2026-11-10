@@ -4,14 +4,15 @@
 
 # YTBrief
 
-Local YouTube and Bilibili video summarization helper for Windows.
+Windows YouTube and Bilibili transcript and summarization helper.
 
 What it does:
 
-1. Paste a YouTube or Bilibili URL
-2. For YouTube, download audio with `yt-dlp`, then transcribe it with faster-whisper
-3. For Bilibili, fetch an available subtitle directly from Bilibili's API without using `yt-dlp`
-4. Produce a timestamped transcript and a ChatGPT-ready prompt
+1. Paste a YouTube or Bilibili URL.
+2. For YouTube, download audio with `yt-dlp` and transcribe it with the configured local Whisper tool.
+3. For Bilibili, request video information and subtitles directly from Bilibili's API. This path does not use `yt-dlp`.
+4. If a Bilibili subtitle is unavailable, try the Bilibili playback API for audio and transcribe it with local Whisper.
+5. Save a timestamped transcript and a ChatGPT prompt.
 
 ## Run It
 
@@ -39,24 +40,15 @@ Update scripts live in `update`:
 - [update/Install-Whisper.bat](update/Install-Whisper.bat)
 - [update/Update-All.bat](update/Update-All.bat)
 
-## Unit Tests
-
-Run the offline unit test suite with:
-
-```powershell
-dotnet run --project tests/OpenYTBrief.UnitTests/OpenYTBrief.UnitTests.csproj
-```
-
 ## Output
 
 Each run creates a folder under `output\TIMESTAMP` with:
 
-- `video.mkv`
-- `audio.wav`
 - `metadata.txt`
 - `chatgpt_prompt.txt`
 - `transcript.txt` when a transcript is available
 - `subtitle.json` for Bilibili videos when a subtitle track is available
+- `audio.*` for YouTube audio, or `bilibili_audio.m4s` and `audio.wav` when Bilibili subtitle fallback uses Whisper
 
 Each transcript line includes the segment start and end time, for example:
 `[00:01:23.400 --> 00:01:27.100] transcript text`
@@ -66,20 +58,46 @@ Each transcript line includes the segment start and end time, for example:
 ![CMD](https://meee.com.tw/mxMRs7Q.png)
 ![Chatgpt](https://meee.com.tw/NDxejgO.png)
 
+## Bilibili Setup
+
+Bilibili may require a signed-in session to provide subtitle information. Add your own Cookie locally:
+
+1. Sign in to Bilibili in your browser.
+2. Export Bilibili cookies in Netscape format, or copy the request Cookie header from your browser's developer tools.
+3. Save the export as `bilibili_cookies.txt` in the project folder. A raw Cookie header can be one line, for example:
+
+   ```text
+   SESSDATA=your_value; bili_jct=your_value; DedeUserID=your_value
+   ```
+
+YTBrief reads this file when it starts. Restart YTBrief after changing it. The file is ignored by Git, but `.gitignore` does not protect it from being included in a manually created ZIP; never share or commit it. Cookies expire and may need to be exported again.
+
+### Bilibili errors
+
+- `-101` means Bilibili did not accept a signed-in session. Check that the Cookie file is present, valid, and was saved before launching YTBrief.
+- HTTP `412` means Bilibili blocked an API request through risk control. It does not mean the video has no subtitles. Wait before retrying; repeated requests may continue to be blocked.
+- Bilibili's APIs can change, so direct API access is not guaranteed for every video or account.
+
 ## Requirements
 
 - Windows
-- .NET 8 or newer
-- `yt-dlp.exe`
-- `ffmpeg.exe`
-- `ffprobe.exe`
-- Python 3.10+ for faster-whisper installation
+- .NET 8 SDK and runtime to build and run from a source checkout
+- Python 3.10+ for faster-whisper; the app can try to install faster-whisper when it is missing
+- An NVIDIA GPU and a compatible NVIDIA driver when using `YTBrief-Launcher.bat`; the launcher selects CUDA
+- Internet access for downloading `yt-dlp`, faster-whisper's CUDA libraries, and the speech model on first use
+- For Bilibili subtitles: a valid local Cookie may be required
+- For Bilibili audio fallback: `ffmpeg.exe` and the configured local Whisper tool; ffmpeg is not bundled
+
+## First-time setup from GitHub
+
+- The repository does not include the external `.exe` tools. YTBrief can download `yt-dlp.exe` when needed; install `ffmpeg.exe` yourself if you need Bilibili audio fallback.
+- The first transcription may take longer: the installer downloads faster-whisper and its CUDA dependencies, then faster-whisper downloads the selected model. These files are cached for later runs.
+- The launcher is configured for NVIDIA CUDA. Computers without a supported NVIDIA GPU cannot use this launcher configuration.
+- Bilibili may require a personal Cookie. Create `bilibili_cookies.txt` locally as described above; do not upload it to GitHub.
 
 ## Notes
 
-- YouTube uses the existing `yt-dlp` and faster-whisper workflow. Bilibili uses its video metadata and player subtitle APIs directly and does not invoke `yt-dlp`.
-- If Bilibili has no accessible subtitle, YTBrief tries its playback API for audio and uses the existing local Whisper and ffmpeg tools. This path does not use `yt-dlp`.
-- If Bilibili requires login, put an exported Netscape-format Cookie file named `bilibili_cookies.txt` in the project folder. This file is ignored by Git and should not be shared.
+- Bilibili uses its video metadata, WBI signing, player subtitle, and playback APIs directly; it does not invoke `yt-dlp`.
 - This version produces a prompt and attempts to paste and submit it in ChatGPT web.
 - If faster-whisper is missing, the app tries to install it from `update\Install-Whisper.bat`.
 - `yt-dlp` update warnings are suppressed.
@@ -89,17 +107,12 @@ Each transcript line includes the segment start and end time, for example:
 
 ## Recent changes (最近改動)
 
+- Bilibili：新增直接 API 字幕擷取、WBI 簽名、Cookie 設定，以及無字幕時的音訊與 Whisper 備援；不經過 yt-dlp。
 - 下載流程：已改為只用 yt-dlp 直接下載音訊 (bestaudio)，不再預先下載完整影片再用 ffmpeg 抽取。下載會輸出到 output\TIMESTAMP\audio.*。
 - 轉錄流程：Transcribe 已修改為接受 yt-dlp 下載的音訊檔；若使用 whisper.cpp 並且音訊不是 WAV，程式會在有 ffmpeg 時自動把音訊轉為 16kHz、單聲道、pcm_s16le 的 WAV。使用 Python whisper 時可直接傳入多種音訊格式。
-- ChatGPT 自動化：在產生 prompt 並寫入檔案、複製到剪貼簿後，程式會自動開啟 https://chat.openai.com/chat 並嘗試貼上（Ctrl+V）並送出（Enter）。此為 best-effort 行為，可能會因瀏覽器焦點或登入狀態而失敗。
+- ChatGPT 自動化：在產生 prompt 並寫入檔案、複製到剪貼簿後，程式會自動開啟 https://chat.openai.com/chat 並嘗試貼上（Ctrl+Shift+V）並送出（Enter）。此為 best-effort 行為，可能會因瀏覽器焦點或登入狀態而失敗。
 - 其他：新增 FindDownloadedAudio helper，用以尋找 yt-dlp 產生的音訊檔；Transcribe 也接收可選的 ffmpeg 路徑以在必要時轉檔。
 - 建置驗證：已在本機使用 dotnet build 編譯通過（0 error）。
-
-# 下一步（可選，選一）
-
-- 若要更可靠的自動化（更高成功率與可控），可改用自動化瀏覽器工具（Puppeteer/Playwright）來打開網頁、等待登入狀態、把文字放到正確的輸入欄再送出。我可以幫你加入一個本地 Playwright/Node 腳本並呼叫它（需要安裝 Node 與 Playwright）。
-- 或者新增一個 CLI 選項 --auto-send 來讓自動送出成為選用而非預設。
-- 或將 changes commit 並把 build artifacts 從 repo 中移除（建議）。
 
 # QA：下載音訊時出現 HTTP Error 403
 

@@ -33,7 +33,8 @@ while (true)
     }
 
     var runId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-var outputDir = Path.GetFullPath(Path.Combine(workRoot, "output", runId));
+    var runTimer = Stopwatch.StartNew();
+    var outputDir = Path.GetFullPath(Path.Combine(workRoot, "output", runId));
 Directory.CreateDirectory(outputDir);
 
 var audioTemplate = Path.Combine(outputDir, "audio.%(ext)s");
@@ -129,7 +130,9 @@ try
             Console.Error.WriteLine("Prompt 已複製到剪貼簿，可手動貼上。");
         }
 
-        Console.Write("要處理下一個連結嗎？ (y/N): ");
+        runTimer.Stop();
+        Console.WriteLine($"\u672c\u6b21\u904b\u884c\u6642\u9593\uff1a{FormatRunTime(runTimer.Elapsed)}");
+        Console.Write("\u8981\u8655\u7406\u4e0b\u4e00\u500b\u9023\u7d50\u55ce\uff1f (y/N): ");
         var bilibiliAnswer = Console.ReadLine();
         if (string.Equals(bilibiliAnswer?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
         {
@@ -189,7 +192,9 @@ try
             Console.WriteLine("找不到本機 Whisper。已先建立 ChatGPT prompt 範本，但 transcript.txt 尚未產生。");
             Console.WriteLine("可先重跑讓它再嘗試自動安裝，或手動執行 update\\Install-Whisper.cmd 後重跑；也可用 --whisper 指定 whisper.exe 路徑。");
             Console.WriteLine($"Prompt: {promptPath}");
-                        continue;
+            runTimer.Stop();
+            Console.WriteLine($"\u672c\u6b21\u904b\u884c\u6642\u9593\uff1a{FormatRunTime(runTimer.Elapsed)}");
+            continue;
         }
     }
 
@@ -224,6 +229,8 @@ try
         Console.Error.WriteLine("Prompt 已複製到剪貼簿，可手動貼上。");
     }
 
+    runTimer.Stop();
+    Console.WriteLine($"\u672c\u6b21\u904b\u884c\u6642\u9593\uff1a{FormatRunTime(runTimer.Elapsed)}");
     // ask user whether to process another link
     Console.Write("要處理下一個連結嗎？ (y/N): ");
     var ans = Console.ReadLine();
@@ -236,9 +243,11 @@ return 0;
 }
 catch (Exception ex)
 {
+    runTimer.Stop();
     Console.Error.WriteLine();
     Console.Error.WriteLine($"失敗: {ex.Message}");
     Console.Error.WriteLine($"保留中間檔案: {outputDir}");
+    Console.WriteLine($"\u672c\u6b21\u904b\u884c\u6642\u9593\uff1a{FormatRunTime(runTimer.Elapsed)}");
 
     Console.Write("要繼續處理下一個連結嗎？ (y/N): ");
     var ans2 = Console.ReadLine();
@@ -373,6 +382,19 @@ static WhisperRunner? ResolveWhisper(string? explicitPath)
 
     var baseDir = AppContext.BaseDirectory;
     var cwd = Directory.GetCurrentDirectory();
+    var python = FindOnPath("python.exe") ?? FindOnPath("python") ?? FindOnPath("py.exe") ?? FindOnPath("py");
+    var fasterWhisperScript = FindFasterWhisperScript(cwd, baseDir);
+
+    // The launcher opts into CUDA through this environment variable. Honor that
+    // choice before falling back to whisper.exe, which may only run on CPU.
+    if (string.Equals(Environment.GetEnvironmentVariable("FASTER_WHISPER_DEVICE"), "gpu", StringComparison.OrdinalIgnoreCase)
+        && python is not null
+        && fasterWhisperScript is not null
+        && HasPythonModule(python, "faster_whisper"))
+    {
+        return new WhisperRunner(python, [fasterWhisperScript]);
+    }
+
     foreach (var candidate in new[]
     {
         Path.Combine(cwd, "whisper.exe"),
@@ -395,8 +417,6 @@ static WhisperRunner? ResolveWhisper(string? explicitPath)
         return new WhisperRunner(whisper, []);
     }
 
-    var python = FindOnPath("python.exe") ?? FindOnPath("python") ?? FindOnPath("py.exe") ?? FindOnPath("py");
-    var fasterWhisperScript = FindFasterWhisperScript(cwd, baseDir);
     if (python is not null && fasterWhisperScript is not null && HasPythonModule(python, "faster_whisper"))
     {
         return new WhisperRunner(python, [fasterWhisperScript]);
@@ -935,7 +955,7 @@ static void OpenChatAndPasteAndSend(string text)
         {
             // Wait for browser to open and render the chat input area
             Thread.Sleep(4000);
-            System.Windows.Forms.SendKeys.SendWait("^v");
+            System.Windows.Forms.SendKeys.SendWait("^+v");
             Thread.Sleep(200);
             System.Windows.Forms.SendKeys.SendWait("{ENTER}");
         }
@@ -948,6 +968,9 @@ static void OpenChatAndPasteAndSend(string text)
     t.Start();
     // don't block the main thread too long; let the paste/send happen asynchronously
 }
+
+static string FormatRunTime(TimeSpan elapsed) =>
+    elapsed.ToString(elapsed.TotalHours >= 1 ? @"h\:mm\:ss" : @"m\:ss");
 
 static void PrintHelp()
 {
